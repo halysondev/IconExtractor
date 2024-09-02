@@ -7,9 +7,73 @@ using System.Windows;
 using System.Windows.Forms;
 using System.Diagnostics;
 using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
+using System.Runtime.InteropServices;
 
 namespace IconExtractor
 {
+    public class ElementSkillWrapper
+    {
+        private IntPtr _dllHandle;
+        private delegate void InitStaticDataDelegate();
+        private delegate IntPtr GetIconStaticDelegate(int skillId);
+
+        private InitStaticDataDelegate InitStaticDataFunc;
+        private GetIconStaticDelegate GetIconStaticFunc;
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr LoadLibrary(string dllToLoad);
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr GetProcAddress(IntPtr hModule, string procedureName);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool FreeLibrary(IntPtr hModule);
+
+        public bool LoadDll(string dllPath)
+        {
+            _dllHandle = LoadLibrary(dllPath);
+            if (_dllHandle == IntPtr.Zero)
+            {
+                System.Windows.Forms.MessageBox.Show("Failed to load DLL.");
+                return false;
+            }
+
+            IntPtr initStaticDataPtr = GetProcAddress(_dllHandle, "?InitStaticData@ElementSkill@GNET@@SAXXZ");
+            IntPtr getIconStaticPtr = GetProcAddress(_dllHandle, "?GetIcon@ElementSkill@GNET@@SAPEBDI@Z");
+
+            if (initStaticDataPtr == IntPtr.Zero || getIconStaticPtr == IntPtr.Zero)
+            {
+                System.Windows.Forms.MessageBox.Show("Failed to get function addresses.");
+                FreeLibrary(_dllHandle);
+                return false;
+            }
+
+            InitStaticDataFunc = Marshal.GetDelegateForFunctionPointer<InitStaticDataDelegate>(initStaticDataPtr);
+            GetIconStaticFunc = Marshal.GetDelegateForFunctionPointer<GetIconStaticDelegate>(getIconStaticPtr);
+
+            return true;
+        }
+
+        public void InitStaticData()
+        {
+            InitStaticDataFunc?.Invoke();
+        }
+
+        public IntPtr GetIconStatic(int skillId)
+        {
+            return GetIconStaticFunc?.Invoke(skillId) ?? IntPtr.Zero;
+        }
+
+        public void UnloadDll()
+        {
+            if (_dllHandle != IntPtr.Zero)
+            {
+                FreeLibrary(_dllHandle);
+                _dllHandle = IntPtr.Zero;
+            }
+        }
+    }
+
     public partial class MainWindow : Window
     {
         private OpenFileDialog _ddsFile;
@@ -17,12 +81,14 @@ namespace IconExtractor
         private Rectangle _itemIconRect;
         private Rectangle _iconFileRect;
         private Dictionary<string, string> _iconSkillMap;
-        private string _skillsSrcDir;
+        private string _dllFilePath;
         private string _outputFolderPath;
+        private ElementSkillWrapper _elementSkillWrapper;
 
         public MainWindow()
         {
             InitializeComponent();
+            _elementSkillWrapper = new ElementSkillWrapper();
         }
 
         private void OpenDds()
@@ -71,128 +137,72 @@ namespace IconExtractor
             }
         }
 
-        private void btnSelectSkillsSourceFolder_Click(object sender, RoutedEventArgs e)
+        private void btnSelectElementSkillDll_Click(object sender, RoutedEventArgs e)
         {
-            SelectSkillsSourceFolder();
+            SelectElementSkillDll();
         }
 
-        private void SelectSkillsSourceFolder()
+        private void SelectElementSkillDll()
         {
             var dialog = new OpenFileDialog
             {
-                ValidateNames = false,
-                CheckFileExists = false,
-                CheckPathExists = true,
-                FileName = "Select folder"
+                Filter = "DLL files|*.dll|All files|*.*",
+                Title = "Select elementskill_64.dll"
             };
 
             if (dialog.ShowDialog() == true)
             {
-                _skillsSrcDir = Path.GetDirectoryName(dialog.FileName);
-                lblSkillsSource.Content = _skillsSrcDir;
+                _dllFilePath = dialog.FileName;
+                lblSkillsSource.Content = _dllFilePath;
+
+                if (!_elementSkillWrapper.LoadDll(_dllFilePath))
+                {
+                    System.Windows.Forms.MessageBox.Show("Failed to load the selected DLL.");
+                }
             }
             else
             {
-                System.Windows.Forms.MessageBox.Show("Skills source folder selection error!");
+                System.Windows.Forms.MessageBox.Show("DLL selection error!");
             }
         }
-
-
 
         private void PreloadIconSkillMap()
         {
             try
             {
+                _elementSkillWrapper.InitStaticData();
+
                 _iconSkillMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-                if (string.IsNullOrEmpty(_skillsSrcDir) || !Directory.Exists(_skillsSrcDir))
+                for (int _skillId = 1; _skillId <= 10000; _skillId++)
                 {
-                    System.Windows.Forms.MessageBox.Show("skills_src directory not found.");
-                    return;
-                }
+                    IntPtr staticIconPtr = _elementSkillWrapper.GetIconStatic(_skillId);
+                    if (staticIconPtr != IntPtr.Zero)
+                    {
+                        string staticIcon = Marshal.PtrToStringAnsi(staticIconPtr);
+                        string decodedIcon = Encoding.GetEncoding("GB2312").GetString(Encoding.Default.GetBytes(staticIcon));
 
-                foreach (string hFilePath in Directory.GetFiles(_skillsSrcDir, "*.h"))
-                {
-                    string[] lines;
-                    try
-                    {
-                        lines = File.ReadAllLines(hFilePath, Encoding.GetEncoding("GB18030"));
-                    }
-                    catch (Exception ex)
-                    {
-                        System.Windows.Forms.MessageBox.Show("Failed to read file: " + hFilePath);
-                        continue;
-                    }
+                        string iconFileNameLower = decodedIcon.ToLower();
 
-                    string skillId = ExtractSkillIdFromFileName(hFilePath);
-                    if (string.IsNullOrEmpty(skillId))
-                    {
-                        System.Windows.Forms.MessageBox.Show("Failed to extract skill ID from file name: " + hFilePath);
-                        continue;
-                    }
-
-                    foreach (string line in lines)
-                    {
-                        if (line.ToLower().Contains("icon") && line.ToLower().Contains(".dds"))
+                        if (!_iconSkillMap.ContainsKey(iconFileNameLower))
                         {
-                            string iconFileName = ExtractIconFileName(line);
-                            if (iconFileName != null)
-                            {
-                                string iconFileNameLower = iconFileName.ToLower();
-                                if (!_iconSkillMap.ContainsKey(iconFileNameLower))
-                                {
-                                    _iconSkillMap[iconFileNameLower] = skillId;
-                                }
-                            }
+                            _iconSkillMap[iconFileNameLower] = _skillId.ToString();
                         }
+
+                        Debug.WriteLine($"Ícone estático para skillId {_skillId}: {decodedIcon}");
+                    }
+                    else
+                    {
+                        Debug.WriteLine($"Falha ao obter o ícone estático para skillId {_skillId}.");
                     }
                 }
 
-                //PrintIconSkillMap();
-
+                PrintIconSkillMap();
             }
             catch (Exception ex)
             {
                 System.Windows.Forms.MessageBox.Show("Error in PreloadIconSkillMap: " + ex.Message);
             }
-        }
-
-
-        private string ExtractSkillIdFromFileName(string filePath)
-        {
-            try
-            {
-                string fileName = Path.GetFileNameWithoutExtension(filePath);
-                if (fileName.StartsWith("skill"))
-                {
-                    string skillId = fileName.Substring(5);
-                    return skillId;
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Windows.Forms.MessageBox.Show("Error in ExtractSkillIdFromFileName: " + ex.Message);
-            }
-            return null;
-        }
-
-        private string ExtractIconFileName(string line)
-        {
-            try
-            {
-                int startIndex = line.IndexOf("\"") + 1;
-                int endIndex = line.ToLower().IndexOf(".dds\"");
-                if (startIndex >= 0 && endIndex > startIndex)
-                {
-                    string iconFileName = line.Substring(startIndex, endIndex - startIndex + 4).Trim().ToLower();
-                    return iconFileName;
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Windows.Forms.MessageBox.Show("Error in ExtractIconFileName: " + ex.Message);
-            }
-            return null;
         }
 
         private void PrintIconSkillMap()
@@ -204,7 +214,6 @@ namespace IconExtractor
             }
         }
 
-        // based on dumbfck's code: https://www.elitepvpers.com/forum/pw-hacks-bots-cheats-exploits/1422109-autopot-ingame-menu.html#post12792417
         private void ExtractIcons()
         {
             try

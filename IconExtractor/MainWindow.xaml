@@ -17,7 +17,7 @@
         <Label x:Name="lblOutput" Content="output path" HorizontalAlignment="Left" Margin="88,70,0,0" VerticalAlignment="Top" FontSize="10"/>
         <Button Content="Select txt" HorizontalAlignment="Left" Margin="8,36,0,0" VerticalAlignment="Top" x:Name="btnOpenTxt" Width="75" Height="26" Click="btnOpenTxt_Click"/>
         <Label x:Name="lblTxtPath" Content="txt path" HorizontalAlignment="Left" Margin="88,38,0,0" VerticalAlignment="Top" FontSize="10"/>
-        <Button Content="Skills Source" HorizontalAlignment="Left" Margin="10,98,0,0" VerticalAlignment="Top" Width="75" Height="26" Click="btnSelectSkillsSourceFolder_Click"/>
-        <Label x:Name="lblSkillsSource" Content="skills_src path" HorizontalAlignment="Left" Margin="92,99,0,0" VerticalAlignment="Top" FontSize="10"/>
+        <Button Content="Select DLL" HorizontalAlignment="Left" Margin="10,98,0,0" VerticalAlignment="Top" Width="75" Height="26" Click="btnSelectElementSkillDll_Click"/>
+        <Label x:Name="lblSkillsSource" Content="elementskill_64.dll path" HorizontalAlignment="Left" Margin="92,99,0,0" VerticalAlignment="Top" FontSize="10"/>
     </Grid>
 </Window>
